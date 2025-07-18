@@ -9,7 +9,11 @@
  * `./src/main.js` using webpack. This gives us some performance wins.
  */
 import path from 'path';
+import fs from 'fs';
 import { app, BrowserWindow, shell, ipcMain } from 'electron';
+import { spawn } from 'child_process';
+
+
 import { autoUpdater } from 'electron-updater';
 import log from 'electron-log';
 import MenuBuilder from './menu';
@@ -30,6 +34,45 @@ ipcMain.on('ipc-example', async (event, arg) => {
   console.log(msgTemplate(arg));
   event.reply('ipc-example', msgTemplate('pong'));
 });
+
+ipcMain.on('gemini-command', (event, { command, sessionId }) => {
+  console.log(`Comando para sesión ${sessionId}: ${command}`);
+
+  const contextPath = path.join(app.getPath('userData'), 'contexts', sessionId);
+  if (!fs.existsSync(contextPath)) {
+    fs.mkdirSync(contextPath, { recursive: true });
+  }
+
+  const executable = 'npx';
+  const geminiProcess = spawn(executable, ['gemini', '-c'], { cwd: contextPath });
+
+  geminiProcess.stdout.on('data', (data) => {
+    const chunk = data.toString();
+    event.sender.send('gemini-response', { type: 'data', content: chunk });
+  });
+
+  geminiProcess.stderr.on('data', (data) => {
+    const chunk = data.toString();
+    event.sender.send('gemini-response', { type: 'error', content: chunk });
+  });
+
+  geminiProcess.on('close', (code) => {
+    console.log(`Proceso de Gemini finalizado con código: ${code}`);
+    event.sender.send('gemini-response', { type: 'close', code });
+  });
+
+  geminiProcess.on('error', (err) => {
+    console.error('Error al iniciar el proceso de Gemini:', err);
+    event.sender.send('gemini-response', {
+      type: 'error',
+      content: `Error al iniciar el proceso: ${err.message}`,
+    });
+  });
+
+  geminiProcess.stdin.write(command);
+  geminiProcess.stdin.end();
+});
+
 
 if (process.env.NODE_ENV === 'production') {
   const sourceMapSupport = require('source-map-support');
@@ -55,6 +98,53 @@ const installExtensions = async () => {
     )
     .catch(console.log);
 };
+
+// --- SESIONES ---
+const sessionsPath = path.join(app.getPath('userData'), 'sessions');
+if (!fs.existsSync(sessionsPath)) {
+  fs.mkdirSync(sessionsPath, { recursive: true });
+}
+
+ipcMain.handle('sessions:create', async () => {
+  const sessionId = `session-${Date.now()}`;
+  const sessionData = {
+    id: sessionId,
+    name: `Nueva Sesión - ${new Date().toLocaleString()}`,
+    history: [],
+  };
+  const filePath = path.join(sessionsPath, `${sessionId}.json`);
+  fs.writeFileSync(filePath, JSON.stringify(sessionData, null, 2));
+  return sessionData;
+});
+
+ipcMain.handle('sessions:load-all', async () => {
+  const files = fs.readdirSync(sessionsPath);
+  const sessions = files
+    .filter((file) => file.endsWith('.json'))
+    .map((file) => {
+      const filePath = path.join(sessionsPath, file);
+      const content = fs.readFileSync(filePath, 'utf-8');
+      return JSON.parse(content);
+    });
+  return sessions;
+});
+
+ipcMain.handle('sessions:load-one', async (event, sessionId) => {
+  const filePath = path.join(sessionsPath, `${sessionId}.json`);
+  if (fs.existsSync(filePath)) {
+    const content = fs.readFileSync(filePath, 'utf-8');
+    return JSON.parse(content);
+  }
+  return null;
+});
+
+ipcMain.on('sessions:save', (event, sessionData) => {
+  const filePath = path.join(sessionsPath, `${sessionData.id}.json`);
+  fs.writeFileSync(filePath, JSON.stringify(sessionData, null, 2));
+});
+
+// --- FIN SESIONES ---
+
 
 const createWindow = async () => {
   if (isDebug) {
