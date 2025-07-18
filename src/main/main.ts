@@ -12,8 +12,6 @@ import path from 'path';
 import fs from 'fs';
 import { app, BrowserWindow, shell, ipcMain } from 'electron';
 import { spawn } from 'child_process';
-
-
 import { autoUpdater } from 'electron-updater';
 import log from 'electron-log';
 import MenuBuilder from './menu';
@@ -43,8 +41,24 @@ ipcMain.on('gemini-command', (event, { command, sessionId }) => {
     fs.mkdirSync(contextPath, { recursive: true });
   }
 
-  const executable = 'npx';
-  const geminiProcess = spawn(executable, ['gemini', '-c'], { cwd: contextPath });
+  // Usar la ruta completa a npx
+  const npxPath = 'C:\\Program Files\\nodejs\\npx.cmd';
+
+  // Verificar si el archivo npx.cmd existe
+  if (!fs.existsSync(npxPath)) {
+    console.error(`No se encontró npx en: ${npxPath}`);
+    event.sender.send('gemini-response', {
+      type: 'error',
+      content: `No se pudo encontrar npx en la ruta: ${npxPath}`,
+    });
+    return;
+  }
+
+  // Usar npx con la ruta completa
+  const geminiProcess = spawn(npxPath, ['gemini', '-c'], {
+    cwd: contextPath,
+    shell: true, // Usar el shell para asegurar que se encuentren los comandos
+  });
 
   geminiProcess.stdout.on('data', (data) => {
     const chunk = data.toString();
@@ -61,6 +75,7 @@ ipcMain.on('gemini-command', (event, { command, sessionId }) => {
     event.sender.send('gemini-response', { type: 'close', code });
   });
 
+  // Configurar manejo de errores
   geminiProcess.on('error', (err) => {
     console.error('Error al iniciar el proceso de Gemini:', err);
     event.sender.send('gemini-response', {
@@ -69,8 +84,30 @@ ipcMain.on('gemini-command', (event, { command, sessionId }) => {
     });
   });
 
-  geminiProcess.stdin.write(command);
-  geminiProcess.stdin.end();
+  // Manejar errores de escritura en stdin
+  geminiProcess.stdin.on('error', (err) => {
+    console.error('Error al escribir en stdin:', err);
+    event.sender.send('gemini-response', {
+      type: 'error',
+      content: `Error al enviar el comando: ${err.message}`,
+    });
+  });
+
+  // Enviar el comando a Gemini
+  try {
+    const commandWithNewline = `${command}\n`; // Añadir salto de línea al final del comando
+    geminiProcess.stdin.write(commandWithNewline);
+    geminiProcess.stdin.end();
+    console.log(`Comando enviado a Gemini: ${command}`);
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : 'Error desconocido';
+    console.error('Error al enviar comando a Gemini:', errorMessage);
+    event.sender.send('gemini-response', {
+      type: 'error',
+      content: `Error al enviar el comando: ${errorMessage}`,
+    });
+  }
 });
 
 
@@ -128,7 +165,6 @@ ipcMain.handle('sessions:load-all', async () => {
     });
   return sessions;
 });
-
 ipcMain.handle('sessions:load-one', async (event, sessionId) => {
   const filePath = path.join(sessionsPath, `${sessionId}.json`);
   if (fs.existsSync(filePath)) {
@@ -141,6 +177,15 @@ ipcMain.handle('sessions:load-one', async (event, sessionId) => {
 ipcMain.on('sessions:save', (event, sessionData) => {
   const filePath = path.join(sessionsPath, `${sessionData.id}.json`);
   fs.writeFileSync(filePath, JSON.stringify(sessionData, null, 2));
+});
+
+ipcMain.handle('sessions:delete', async (event, sessionId) => {
+  const filePath = path.join(sessionsPath, `${sessionId}.json`);
+  if (fs.existsSync(filePath)) {
+    fs.unlinkSync(filePath);
+    return true;
+  }
+  return false;
 });
 
 // --- FIN SESIONES ---

@@ -2,7 +2,15 @@
 /* eslint no-unused-vars: off */
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
 
-export type Channels = 'ipc-example' | 'gemini-command' | 'gemini-response';
+export type Channels = 
+  | 'ipc-example' 
+  | 'gemini-command' 
+  | 'gemini-response'
+  | 'sessions:create'
+  | 'sessions:load-all'
+  | 'sessions:load-one'
+  | 'sessions:save'
+  | 'sessions:delete';
 
 const electronHandler = {
   ipcRenderer: {

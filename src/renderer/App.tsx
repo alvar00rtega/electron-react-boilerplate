@@ -12,7 +12,14 @@ import {
   ListItemButton,
   ListItemText,
   Divider,
+  IconButton,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogContentText,
+  DialogActions,
 } from '@mui/material';
+import DeleteIcon from '@mui/icons-material/Delete';
 
 const drawerWidth = 240;
 
@@ -31,6 +38,8 @@ export default function App() {
   const [command, setCommand] = useState('');
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeSession, setActiveSession] = useState<Session | null>(null);
+  const [sessionToDelete, setSessionToDelete] = useState<Session | null>(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const conversationEndRef = useRef<null | HTMLDivElement>(null);
 
   const loadSessions = async () => {
@@ -94,6 +103,33 @@ export default function App() {
     setActiveSession(session);
   };
 
+  const handleDeleteClick = (session: Session, event: React.MouseEvent) => {
+    event.stopPropagation();
+    setSessionToDelete(session);
+    setDeleteDialogOpen(true);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (sessionToDelete) {
+      const success = await window.electron.ipcRenderer.invoke('sessions:delete', sessionToDelete.id);
+      if (success) {
+        // If the deleted session is the active one, clear it
+        if (activeSession?.id === sessionToDelete.id) {
+          setActiveSession(null);
+        }
+        // Reload sessions
+        await loadSessions();
+      }
+      setDeleteDialogOpen(false);
+      setSessionToDelete(null);
+    }
+  };
+
+  const handleCancelDelete = () => {
+    setDeleteDialogOpen(false);
+    setSessionToDelete(null);
+  };
+
   return (
     <Box sx={{ display: 'flex' }}>
       <CssBaseline />
@@ -116,17 +152,65 @@ export default function App() {
         <Divider />
         <List>
           {sessions.map((session) => (
-            <ListItem key={session.id} disablePadding>
+            <ListItem 
+              key={session.id} 
+              disablePadding
+              secondaryAction={
+                <IconButton 
+                  edge="end" 
+                  aria-label="delete"
+                  onClick={(e) => handleDeleteClick(session, e)}
+                  size="small"
+                  sx={{ mr: 1 }}
+                >
+                  <DeleteIcon fontSize="small" />
+                </IconButton>
+              }
+            >
               <ListItemButton
                 selected={activeSession?.id === session.id}
                 onClick={() => handleSelectSession(session.id)}
+                sx={{ pr: 6 }}
               >
-                <ListItemText primary={session.name} />
+                <ListItemText 
+                  primary={session.name} 
+                  primaryTypographyProps={{
+                    noWrap: true,
+                    style: {
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      maxWidth: '180px',
+                    },
+                  }}
+                />
               </ListItemButton>
             </ListItem>
           ))}
         </List>
       </Drawer>
+      
+      {/* Delete Confirmation Dialog */}
+      <Dialog
+        open={deleteDialogOpen}
+        onClose={handleCancelDelete}
+        aria-labelledby="delete-dialog-title"
+      >
+        <DialogTitle id="delete-dialog-title">Confirmar eliminación</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            ¿Estás seguro de que deseas eliminar la sesión "{sessionToDelete?.name}"?
+            Esta acción no se puede deshacer.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCancelDelete} color="primary">
+            Cancelar
+          </Button>
+          <Button onClick={handleConfirmDelete} color="error" autoFocus>
+            Eliminar
+          </Button>
+        </DialogActions>
+      </Dialog>
       <Box
         component="main"
         sx={{
